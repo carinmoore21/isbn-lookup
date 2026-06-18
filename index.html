@@ -47,10 +47,11 @@
     </header>
     <section class="card">
       <label for="input">Item numbers or UPCs</label>
-      <textarea id="input" placeholder="Enter one Item Number or UPC per line\n\nExamples:\n10833\n749190108331\n10190"></textarea>
+      <textarea id="input"></textarea>
       <div class="buttons">
         <button type="button" id="lookupBtn">Lookup ISBNs</button>
-        <button type="button" id="copyBtn" class="secondary">Copy Results</button>
+        <button type="button" id="copyBtn" class="secondary">Copy Full Results</button>
+        <button type="button" id="copyIsbnsBtn" class="secondary">Copy ISBNs Only</button>
         <button type="button" id="clearBtn" class="secondary">Clear</button>
       </div>
       <div id="summary" class="summary">Loaded 1,840 lookup records.</div>
@@ -72,13 +73,6 @@ function normalize(value) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-function formatStatus(status) {
-  const value = String(status || '').trim();
-  if (!value) return '';
-  if (value.toLowerCase() === 'current') return 'Active';
-  return value;
-}
-
 const lookupMap = new Map();
 for (const row of DATA) {
   if (row.item) lookupMap.set(normalize(row.item), Object.assign({}, row, {matchType: 'Item'}));
@@ -86,6 +80,7 @@ for (const row of DATA) {
 }
 
 let lastResultsText = '';
+let lastIsbnsText = '';
 
 function parseInputs(text) {
   return String(text || '').split(/[\n,;\t ]+/).map(x => x.trim()).filter(Boolean);
@@ -104,11 +99,13 @@ function lookup() {
     body.innerHTML = '<tr><td colspan="5" class="small">Paste at least one item number or UPC.</td></tr>';
     document.getElementById('summary').textContent = 'Loaded ' + DATA.length.toLocaleString() + ' lookup records.';
     lastResultsText = '';
+    lastIsbnsText = '';
     return;
   }
 
   let found = 0;
-  const lines = ['Input	ISBN	Match Type	Description	Status'];
+  const lines = ['Input | ISBN | Description | Status'];
+  const isbnLines = [];
 
   for (const input of inputs) {
     const key = normalize(input);
@@ -124,40 +121,68 @@ function lookup() {
         '<td class="hideMobile">' + escapeHtml(result.matchType) + '</td>' +
         '<td class="hideMobile">' + escapeHtml(result.description || '') + '</td>' +
         '<td class="hideMobile">' + escapeHtml(statusDisplay) + '</td>';
-      lines.push([input, isbnDisplay, result.matchType, result.description || '', statusDisplay].join('\t'));
+      lines.push([input, isbnDisplay, result.description || '', statusDisplay].map(cleanCopyValue).join(' | '));
+      if (result.isbn) isbnLines.push(result.isbn);
     } else {
       tr.innerHTML = '<td>' + escapeHtml(input) + '</td>' +
         '<td class="notfound">—</td>' +
         '<td class="hideMobile">—</td><td class="hideMobile">—</td><td class="hideMobile notfound">❌ Not Found</td>';
-      lines.push([input, '', '', '', 'NOT FOUND'].join('\t'));
+      lines.push([input, 'NOT FOUND', '', 'NOT FOUND'].map(cleanCopyValue).join(' | '));
     }
     body.appendChild(tr);
   }
 
   lastResultsText = lines.join('\n');
+  lastIsbnsText = isbnLines.join('\n');
   document.getElementById('summary').textContent = found + ' of ' + inputs.length + ' found. Loaded ' + DATA.length.toLocaleString() + ' lookup records.';
+}
+
+
+function formatStatus(status) {
+  const s = String(status == null ? '' : status).trim();
+  if (!s) return '';
+  if (s.toLowerCase() === 'current') return 'Active';
+  return s;
+}
+
+function cleanCopyValue(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
+function copyTextToClipboard(text, message) {
+  if (!text) return;
+  const done = () => {
+    const summary = document.getElementById('summary');
+    summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs copied\./g, '') + ' ' + message;
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyText(text, message));
+  } else {
+    fallbackCopyText(text, message);
+  }
+}
+
+function fallbackCopyText(text, message) {
+  const temp = document.createElement('textarea');
+  temp.value = text;
+  document.body.appendChild(temp);
+  temp.select();
+  document.execCommand('copy');
+  document.body.removeChild(temp);
+  const summary = document.getElementById('summary');
+  summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs copied\./g, '') + ' ' + message;
+}
+
+function copyIsbnsOnly() {
+  if (!lastIsbnsText) lookup();
+  if (!lastIsbnsText) return;
+  copyTextToClipboard(lastIsbnsText, 'ISBNs copied.');
 }
 
 function copyResults() {
   if (!lastResultsText) lookup();
   if (!lastResultsText) return;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(lastResultsText).then(() => {
-      document.getElementById('summary').textContent += ' Results copied.';
-    }).catch(() => fallbackCopy());
-  } else {
-    fallbackCopy();
-  }
-}
-
-function fallbackCopy() {
-  const temp = document.createElement('textarea');
-  temp.value = lastResultsText;
-  document.body.appendChild(temp);
-  temp.select();
-  document.execCommand('copy');
-  document.body.removeChild(temp);
-  document.getElementById('summary').textContent += ' Results copied.';
+  copyTextToClipboard(lastResultsText, 'Full results copied.');
 }
 
 function clearAll() {
@@ -165,11 +190,14 @@ function clearAll() {
   document.getElementById('resultsBody').innerHTML = '<tr><td colspan="5" class="small">No lookups yet.</td></tr>';
   document.getElementById('summary').textContent = 'Loaded ' + DATA.length.toLocaleString() + ' lookup records.';
   lastResultsText = '';
+  lastIsbnsText = '';
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('input').placeholder = 'Enter one Item Number or UPC per line\n\nExamples:\n10833\n749190108331\n10190';
   document.getElementById('lookupBtn').addEventListener('click', lookup);
   document.getElementById('copyBtn').addEventListener('click', copyResults);
+  document.getElementById('copyIsbnsBtn').addEventListener('click', copyIsbnsOnly);
   document.getElementById('clearBtn').addEventListener('click', clearAll);
 });
 </script>
