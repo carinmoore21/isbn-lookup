@@ -30,6 +30,8 @@
     #partialInput { min-height:110px; }
     .buttons { display:flex; flex-direction:column; gap:10px; margin-top:14px; }
     button { border:0; border-radius:10px; padding:13px 16px; font-weight:bold; font-size:15px; cursor:pointer; background:var(--accent); color:white; width:100%; }
+    button:disabled { opacity:0.45; cursor:not-allowed; background:#e8eceb !important; color:#777 !important; border-color:#d9d9d9 !important; }
+    button:disabled:hover { background:#e8eceb !important; }
     button.secondary { background:#e8eceb; color:#1f3332; }
     button:hover { background:var(--accent-dark); }
     button.secondary:hover { background:#d9e0df; }
@@ -54,6 +56,7 @@
     .small { font-size:13px; color:var(--muted); }
     .footer { font-size:12px; color:var(--muted); margin-top:16px; }
     .resultsCard { margin-top:18px; }
+    .hidden { display:none; }
     @media (max-width:620px) { .wrap{padding:14px;} .brand{gap:10px;} .brand img{width:260px;} h1{font-size:24px;} .sectionTitle{font-size:20px;} .toolCard{padding:16px;} th,td{padding:8px;font-size:14px;} .hideMobile{display:none;} button{width:100%;} }
   </style>
 </head>
@@ -68,8 +71,8 @@
       </div>
     </header>
 
-    <section class="card toolCard mainLookup">
-      <div class="sectionTitle">1. Item Numbers / UPCs</div>
+    <section id="mainSection" class="card toolCard mainLookup">
+      <div class="sectionTitle">1. Lookup by Item Number or UPC</div>
       <p class="instructions">Enter one Item Number or UPC per line. Add quantity after a space if needed.</p>
       <p class="help">If no quantity is entered, a quantity of 1 is assumed. Card quantities are converted to packs of 6.</p>
       <textarea id="input" aria-label="Item numbers or UPCs" placeholder="Example:
@@ -78,14 +81,14 @@
 749190115209 12"></textarea>
       <div class="buttons">
         <button type="button" id="lookupBtn" class="primary">Lookup ISBNs</button>
-        <button type="button" id="copyIsbnsQtyBtn" class="outline">Copy ISBN &amp; Qty <span class="small">(ISBN first, then quantity)</span></button>
-        <button type="button" id="copyBtn" class="outline">Copy Full Description</button>
+        <button type="button" id="copyIsbnsQtyBtn" class="outline" disabled>Copy ISBN &amp; Qty</button>
+        <button type="button" id="copyBtn" class="outline" disabled>Copy Full Description</button>
         <button type="button" id="clearBtn" class="clear">Clear</button>
       </div>
       <div id="summary" class="summary">Ready</div>
     </section>
 
-    <section class="card toolCard partialLookup">
+    <section id="partialSection" class="card toolCard partialLookup">
       <div class="sectionTitle">2. Lookup by Partial ISBN</div>
       <p class="instructions">Enter the last 4–5 digits of an ISBN, one per line.</p>
       <textarea id="partialInput" aria-label="Partial ISBN lookup" placeholder="Example:
@@ -94,23 +97,23 @@
 68737"></textarea>
       <div class="buttons">
         <button type="button" id="partialBtn" class="primary">Lookup ISBNs</button>
-        <button type="button" id="partialCopyIsbnsQtyBtn" class="outline">Copy ISBN &amp; Qty <span class="small">(ISBN first, then quantity)</span></button>
-        <button type="button" id="partialCopyBtn" class="outline">Copy Full Description</button>
+        <button type="button" id="partialCopyIsbnsQtyBtn" class="outline" disabled>Copy ISBN &amp; Qty</button>
+        <button type="button" id="partialCopyBtn" class="outline" disabled>Copy Full Description</button>
         <button type="button" id="partialClearBtn" class="clear">Clear</button>
       </div>
     </section>
 
-    <section class="card resultsCard">
+    <section id="resultsCard" class="card resultsCard hidden">
       <div class="tableWrap">
         <table id="resultsTable">
-          <thead id="resultsHead"><tr><th>Input</th><th>Qty</th><th>ISBN</th><th class="hideMobile">Match</th><th class="hideMobile">Description</th><th class="hideMobile">Status</th><th class="hideMobile">Notes</th></tr></thead>
-          <tbody id="resultsBody"><tr><td colspan="7" class="small">No lookups yet.</td></tr></tbody>
+          <thead id="resultsHead"><tr><th>Input</th><th>ISBN</th><th>Qty</th><th>Description</th><th>Status</th><th>Notes</th></tr></thead>
+          <tbody id="resultsBody"><tr><td colspan="6" class="small">No lookups yet.</td></tr></tbody>
         </table>
       </div>
     </section>
     <section class="card tip">
       <div class="tipIcon">i</div>
-      <div>Copy and paste results directly into MarketTime using Quick Import, or drop into an Excel file for customer review.</div>
+      <div><strong>Tip:</strong> Copy and paste results directly into MarketTime using Quick Import, or drop into an Excel file for customer review.</div>
     </section>
     <p class="footer">Data updated: June 2026 | Version 1.0 | Feedback welcome</p>
   </div>
@@ -143,8 +146,10 @@ function isCard(row) {
 
 const lookupMap = new Map();
 for (const row of DATA) {
-  if (row.item) lookupMap.set(normalize(row.item), Object.assign({}, row, {matchType: 'Item'}));
-  if (row.upc) lookupMap.set(normalize(row.upc), Object.assign({}, row, {matchType: 'UPC'}));
+  const itemKey = normalize(row.item || '');
+  const upcKey = normalize(row.upc || '');
+  if (itemKey) lookupMap.set(itemKey, Object.assign({matchType:'Item'}, row));
+  if (upcKey) lookupMap.set(upcKey, Object.assign({matchType:'UPC'}, row));
 }
 
 const isbnSuffixMap = new Map();
@@ -162,13 +167,35 @@ for (const row of DATA) {
 
 let lastResultsText = '';
 let lastIsbnsQtyText = '';
+let activeMode = '';
 
-function setMainHeader() {
-  document.getElementById('resultsHead').innerHTML = '<tr><th>Input</th><th>Qty</th><th>ISBN</th><th class="hideMobile">Match</th><th class="hideMobile">Description</th><th class="hideMobile">Status</th><th class="hideMobile">Notes</th></tr>';
+function setResultsHeader() {
+  document.getElementById('resultsHead').innerHTML = '<tr><th>Input</th><th>ISBN</th><th>Qty</th><th>Description</th><th>Status</th><th>Notes</th></tr>';
 }
 
-function setPartialHeader() {
-  document.getElementById('resultsHead').innerHTML = '<tr><th>Search</th><th>Possible ISBN</th><th class="hideMobile">Item #</th><th class="hideMobile">UPC</th><th class="hideMobile">Description</th><th class="hideMobile">Status</th><th class="hideMobile">Notes</th></tr>';
+function showResultsUnder(sectionId) {
+  const resultsCard = document.getElementById('resultsCard');
+  const section = document.getElementById(sectionId);
+  section.insertAdjacentElement('afterend', resultsCard);
+  resultsCard.classList.remove('hidden');
+}
+
+function setCopyButtons(mode, enabled) {
+  const mainButtons = [document.getElementById('copyIsbnsQtyBtn'), document.getElementById('copyBtn')];
+  const partialButtons = [document.getElementById('partialCopyIsbnsQtyBtn'), document.getElementById('partialCopyBtn')];
+  [...mainButtons, ...partialButtons].forEach(btn => { btn.disabled = true; });
+  if (!enabled) return;
+  const buttons = mode === 'partial' ? partialButtons : mainButtons;
+  buttons.forEach(btn => { btn.disabled = false; });
+}
+
+function resetResults(message) {
+  setResultsHeader();
+  document.getElementById('resultsBody').innerHTML = '<tr><td colspan="6" class="small">' + escapeHtml(message || 'No lookups yet.') + '</td></tr>';
+  document.getElementById('summary').textContent = 'Ready';
+  lastResultsText = '';
+  lastIsbnsQtyText = '';
+  setCopyButtons('', false);
 }
 
 function parseInputs(text) {
@@ -225,17 +252,25 @@ function calculateQty(row, entry) {
   return { qtyInput, exportQty, valid, notes };
 }
 
+function statusMessage(found, total, itemLabel, warningText) {
+  const ok = found === total && !warningText;
+  const icon = ok ? '✓' : '⚠';
+  return icon + ' ' + found + ' of ' + total + ' ' + itemLabel + ' found.' + (warningText ? ' ' + warningText : '');
+}
+
 function lookup() {
-  setMainHeader();
+  activeMode = 'main';
+  showResultsUnder('mainSection');
+  setResultsHeader();
   const entries = parseInputs(document.getElementById('input').value);
   const body = document.getElementById('resultsBody');
   body.innerHTML = '';
+  lastResultsText = '';
+  lastIsbnsQtyText = '';
+  setCopyButtons('', false);
 
   if (entries.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="small">Paste at least one item number or UPC.</td></tr>';
-    document.getElementById('summary').textContent = 'Ready';
-    lastResultsText = '';
-    lastIsbnsQtyText = '';
+    resetResults('Paste at least one item number or UPC.');
     return;
   }
 
@@ -243,7 +278,7 @@ function lookup() {
   let duplicateCount = 0;
   let warningCount = 0;
   const seen = new Map();
-  const lines = ['Input | Qty | ISBN | Description | Status | Notes'];
+  const lines = ['Input | ISBN | Qty | Description | Status | Notes'];
   const isbnQtyLines = [];
 
   entries.forEach((entry, index) => {
@@ -269,17 +304,16 @@ function lookup() {
 
       const isbnDisplay = result.isbn || 'No ISBN listed';
       const statusDisplay = formatStatus(result.status);
-      const noteText = notes.join('; ');
-      const noteClass = noteText.includes('must be') ? 'invalid' : 'duplicate';
+      const noteText = notes.join('; ') || '—';
+      const noteClass = noteText.includes('must be') ? 'invalid' : (noteText.includes('Duplicate') || noteText.includes('cards =') ? 'duplicate' : '');
       tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
-        '<td>' + escapeHtml(qtyInfo.exportQty) + '</td>' +
         '<td><strong>' + escapeHtml(isbnDisplay) + '</strong></td>' +
-        '<td class="hideMobile">' + escapeHtml(result.matchType) + '</td>' +
-        '<td class="hideMobile">' + escapeHtml(result.description || '') + '</td>' +
-        '<td class="hideMobile">' + escapeHtml(statusDisplay) + '</td>' +
-        '<td class="hideMobile ' + noteClass + '">' + escapeHtml(noteText) + '</td>';
-      lines.push([entry.input, qtyInfo.exportQty, isbnDisplay, result.description || '', statusDisplay, noteText].map(cleanCopyValue).join(' | '));
-      if (result.isbn && qtyInfo.valid) isbnQtyLines.push(result.isbn + '\t' + qtyInfo.exportQty);
+        '<td>' + escapeHtml(qtyInfo.exportQty) + '</td>' +
+        '<td>' + escapeHtml(result.description || '') + '</td>' +
+        '<td>' + escapeHtml(statusDisplay) + '</td>' +
+        '<td class="' + noteClass + '">' + escapeHtml(noteText) + '</td>';
+      lines.push([entry.input, isbnDisplay, qtyInfo.exportQty, result.description || '', statusDisplay, noteText].map(cleanCopyValue).join(' | '));
+      if (result.isbn && qtyInfo.valid) isbnQtyLines.push(String(result.isbn) + '\t' + String(qtyInfo.exportQty));
     } else {
       const ckey = canonicalKey(null, entry.input);
       if (seen.has(ckey)) {
@@ -289,41 +323,47 @@ function lookup() {
         seen.set(ckey, rowNumber);
       }
 
-      const noteText = notes.join('; ');
+      const noteText = notes.join('; ') || '—';
       tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
-        '<td>' + escapeHtml(entry.qtyProvided ? entry.qtyRaw : 1) + '</td>' +
         '<td class="notfound">—</td>' +
-        '<td class="hideMobile">—</td><td class="hideMobile">—</td><td class="hideMobile notfound">❌ Not Found</td>' +
-        '<td class="hideMobile duplicate">' + escapeHtml(noteText) + '</td>';
-      lines.push([entry.input, entry.qtyProvided ? entry.qtyRaw : 1, 'NOT FOUND', '', 'NOT FOUND', noteText].map(cleanCopyValue).join(' | '));
+        '<td>' + escapeHtml(entry.qtyProvided ? entry.qtyRaw : 1) + '</td>' +
+        '<td>—</td>' +
+        '<td class="notfound">❌ Not Found</td>' +
+        '<td class="duplicate">' + escapeHtml(noteText) + '</td>';
+      lines.push([entry.input, 'NOT FOUND', entry.qtyProvided ? entry.qtyRaw : 1, '', 'NOT FOUND', noteText].map(cleanCopyValue).join(' | '));
     }
     body.appendChild(tr);
   });
 
   lastResultsText = lines.join('\n');
   lastIsbnsQtyText = isbnQtyLines.join('\n');
-  let message = found + ' of ' + entries.length + ' items found.';
-  if (duplicateCount > 0) message += ' ' + duplicateCount + ' duplicate warning' + (duplicateCount === 1 ? '' : 's') + '.';
-  if (warningCount > 0) message += ' ' + warningCount + ' quantity warning' + (warningCount === 1 ? '' : 's') + '.';
-  document.getElementById('summary').textContent = message;
+  let warningText = '';
+  if (duplicateCount > 0) warningText += duplicateCount + ' duplicate warning' + (duplicateCount === 1 ? '' : 's') + '.';
+  if (warningCount > 0) warningText += (warningText ? ' ' : '') + warningCount + ' quantity warning' + (warningCount === 1 ? '' : 's') + '.';
+  document.getElementById('summary').textContent = statusMessage(found, entries.length, 'items', warningText);
+  setCopyButtons('main', !!lastResultsText);
+  document.getElementById('resultsCard').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 
 function findByLastDigits() {
-  setPartialHeader();
+  activeMode = 'partial';
+  showResultsUnder('partialSection');
+  setResultsHeader();
   const inputs = parsePartialInputs(document.getElementById('partialInput').value);
   const body = document.getElementById('resultsBody');
   body.innerHTML = '';
   lastResultsText = '';
   lastIsbnsQtyText = '';
+  setCopyButtons('', false);
 
   if (inputs.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="small">Enter the last 4–5 digits of an ISBN.</td></tr>';
-    document.getElementById('summary').textContent = 'Ready';
+    resetResults('Enter the last 4–5 digits of an ISBN.');
     return;
   }
 
+  let searchesWithMatches = 0;
   let totalMatches = 0;
-  const lines = ['Search | Possible ISBN | Item # | UPC | Description | Status | Notes'];
+  const lines = ['Input | ISBN | Qty | Description | Status | Notes'];
   const isbnQtyLines = [];
 
   inputs.forEach(search => {
@@ -340,47 +380,51 @@ function findByLastDigits() {
 
     if (unique.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + escapeHtml(search) + '</td><td class="notfound">—</td><td class="hideMobile">—</td><td class="hideMobile">—</td><td class="hideMobile">—</td><td class="hideMobile notfound">❌ Not Found</td><td class="hideMobile">—</td>';
+      tr.innerHTML = '<td>' + escapeHtml(search) + '</td>' +
+        '<td class="notfound">—</td><td>—</td><td>—</td><td class="notfound">❌ Not Found</td><td>—</td>';
       body.appendChild(tr);
-      lines.push([search, 'NOT FOUND', '', '', '', 'NOT FOUND', ''].join(' | '));
+      lines.push([search, 'NOT FOUND', '', '', 'NOT FOUND', ''].join(' | '));
       return;
     }
 
+    searchesWithMatches += 1;
     if (unique.length > 1) {
       const trNotice = document.createElement('tr');
-      trNotice.innerHTML = '<td>' + escapeHtml(search) + '</td><td colspan="6" class="duplicate">Multiple matches found</td>';
+      trNotice.innerHTML = '<td>' + escapeHtml(search) + '</td><td colspan="5" class="duplicate">Multiple matches found — review options below</td>';
       body.appendChild(trNotice);
-      lines.push([search, 'Multiple matches found', '', '', '', '', ''].join(' | '));
+      lines.push([search, 'Multiple matches found', '', '', '', 'Review options below'].join(' | '));
     }
 
     unique.forEach(row => {
       totalMatches += 1;
       const statusDisplay = formatStatus(row.status);
-      const note = unique.length > 1 ? 'Possible match' : '';
+      const note = unique.length > 1 ? 'Possible match' : '—';
       const tr = document.createElement('tr');
       tr.innerHTML = '<td>' + escapeHtml(search) + '</td>' +
         '<td><strong>' + escapeHtml(row.isbn || '') + '</strong></td>' +
-        '<td class="hideMobile">' + escapeHtml(row.item || '') + '</td>' +
-        '<td class="hideMobile">' + escapeHtml(row.upc || '') + '</td>' +
-        '<td class="hideMobile">' + escapeHtml(row.description || '') + '</td>' +
-        '<td class="hideMobile">' + escapeHtml(statusDisplay) + '</td>' +
-        '<td class="hideMobile duplicate">' + escapeHtml(note) + '</td>';
+        '<td>1</td>' +
+        '<td>' + escapeHtml(row.description || '') + '</td>' +
+        '<td>' + escapeHtml(statusDisplay) + '</td>' +
+        '<td class="duplicate">' + escapeHtml(note) + '</td>';
       body.appendChild(tr);
-      lines.push([search, row.isbn || '', row.item || '', row.upc || '', row.description || '', statusDisplay, note].map(cleanCopyValue).join(' | '));
-      if (row.isbn) isbnQtyLines.push(row.isbn + '\t1');
+      lines.push([search, row.isbn || '', 1, row.description || '', statusDisplay, note].map(cleanCopyValue).join(' | '));
+      if (row.isbn) isbnQtyLines.push(String(row.isbn) + '\t1');
     });
   });
 
   lastResultsText = lines.join('\n');
   lastIsbnsQtyText = isbnQtyLines.join('\n');
-  document.getElementById('summary').textContent = totalMatches + ' possible match' + (totalMatches === 1 ? '' : 'es') + ' found.';
+  let message = statusMessage(searchesWithMatches, inputs.length, 'searches', totalMatches > searchesWithMatches ? totalMatches + ' possible matches listed.' : '');
+  document.getElementById('summary').textContent = message;
+  setCopyButtons('partial', !!lastResultsText);
+  document.getElementById('resultsCard').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 
 function copyTextToClipboard(text, message) {
   if (!text) return;
   const done = () => {
     const summary = document.getElementById('summary');
-    summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs \+ Qty copied\.| ISBN & Qty copied\.| Full results copied\.| Full description copied\./g, '') + ' ' + message;
+    summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs \+ Qty copied\.| Full results copied\./g, '') + ' ' + message;
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyText(text, message));
@@ -397,56 +441,48 @@ function fallbackCopyText(text, message) {
   document.execCommand('copy');
   document.body.removeChild(temp);
   const summary = document.getElementById('summary');
-  summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs \+ Qty copied\.| ISBN & Qty copied\.| Full results copied\.| Full description copied\./g, '') + ' ' + message;
+  summary.textContent = summary.textContent.replace(/ Results copied\.| ISBNs \+ Qty copied\.| Full results copied\./g, '') + ' ' + message;
 }
 
-function copyIsbnsQty() {
-  if (!lastIsbnsQtyText) {
-    document.getElementById('summary').textContent = 'Run a lookup first, then copy ISBN & Qty.';
-    return;
+function copyIsbnsQty(mode) {
+  if (!lastIsbnsQtyText || activeMode !== mode) return;
+  copyTextToClipboard(lastIsbnsQtyText, 'ISBNs + Qty copied.');
+}
+
+function copyResults(mode) {
+  if (!lastResultsText || activeMode !== mode) return;
+  copyTextToClipboard(lastResultsText, 'Full results copied.');
+}
+
+function clearMain() {
+  document.getElementById('input').value = '';
+  if (activeMode === 'main') {
+    resetResults('No lookups yet.');
+    document.getElementById('resultsCard').classList.add('hidden');
+    activeMode = '';
   }
-  copyTextToClipboard(lastIsbnsQtyText, 'ISBN & Qty copied.');
 }
-
-function copyResults() {
-  if (!lastResultsText) {
-    document.getElementById('summary').textContent = 'Run a lookup first, then copy full description.';
-    return;
-  }
-  copyTextToClipboard(lastResultsText, 'Full description copied.');
-}
-
 
 function clearPartial() {
   document.getElementById('partialInput').value = '';
-  setPartialHeader();
-  document.getElementById('resultsBody').innerHTML = '<tr><td colspan="7" class="small">No lookups yet.</td></tr>';
-  document.getElementById('summary').textContent = 'Ready';
-  lastResultsText = '';
-  lastIsbnsQtyText = '';
-}
-
-function clearAll() {
-  document.getElementById('input').value = '';
-  document.getElementById('partialInput').value = '';
-  setMainHeader();
-  document.getElementById('resultsBody').innerHTML = '<tr><td colspan="7" class="small">No lookups yet.</td></tr>';
-  document.getElementById('summary').textContent = 'Ready';
-  lastResultsText = '';
-  lastIsbnsQtyText = '';
+  if (activeMode === 'partial') {
+    resetResults('No lookups yet.');
+    document.getElementById('resultsCard').classList.add('hidden');
+    activeMode = '';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  setCopyButtons('', false);
   document.getElementById('lookupBtn').addEventListener('click', lookup);
-  document.getElementById('copyBtn').addEventListener('click', copyResults);
-  document.getElementById('copyIsbnsQtyBtn').addEventListener('click', copyIsbnsQty);
+  document.getElementById('copyBtn').addEventListener('click', () => copyResults('main'));
+  document.getElementById('copyIsbnsQtyBtn').addEventListener('click', () => copyIsbnsQty('main'));
   document.getElementById('partialBtn').addEventListener('click', findByLastDigits);
-  document.getElementById('partialCopyBtn').addEventListener('click', copyResults);
-  document.getElementById('partialCopyIsbnsQtyBtn').addEventListener('click', copyIsbnsQty);
-  document.getElementById('clearBtn').addEventListener('click', clearAll);
+  document.getElementById('partialCopyBtn').addEventListener('click', () => copyResults('partial'));
+  document.getElementById('partialCopyIsbnsQtyBtn').addEventListener('click', () => copyIsbnsQty('partial'));
+  document.getElementById('clearBtn').addEventListener('click', clearMain);
   document.getElementById('partialClearBtn').addEventListener('click', clearPartial);
 });
 </script>
 </body>
 </html>
-
