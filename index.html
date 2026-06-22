@@ -90,7 +90,7 @@
 
     <section id="partialSection" class="card toolCard partialLookup">
       <div class="sectionTitle">2. Lookup by Partial ISBN</div>
-      <p class="instructions">Enter the last 4–5 digits of an ISBN, one per line.</p>
+      <p class="instructions">Enter the last 4–5 digits of an ISBN, one per line. Add quantity after a space if needed.</p>
       <textarea id="partialInput" aria-label="Partial ISBN lookup" placeholder="Example:
 49352
 12644
@@ -130,6 +130,11 @@ function formatStatus(value) {
   if (!status) return '';
   if (status.toLowerCase() === 'current') return 'Active';
   return status;
+}
+
+function isActiveStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return status === 'current' || status === 'active';
 }
 
 function escapeHtml(value) {
@@ -217,7 +222,21 @@ function parseInputs(text) {
 }
 
 function parsePartialInputs(text) {
-  return String(text || '').split(/[\r\n,;\t ]+/).map(x => x.trim()).filter(Boolean);
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const parts = line.split(/[\t ,;]+/).filter(Boolean);
+      const input = parts[0] || '';
+      let qtyRaw = '';
+      let qtyProvided = false;
+      if (parts.length > 1 && /^\d+(?:\.\d+)?$/.test(parts[1])) {
+        qtyRaw = parts[1];
+        qtyProvided = true;
+      }
+      return { raw: line, input, qtyRaw, qtyProvided };
+    });
 }
 
 function canonicalKey(result, input) {
@@ -277,6 +296,7 @@ function lookup() {
   let found = 0;
   let duplicateCount = 0;
   let warningCount = 0;
+  let excludedCount = 0;
   const seen = new Map();
   const lines = ['Input | ISBN | Qty | Description | Status | Notes'];
   const isbnQtyLines = [];
@@ -287,12 +307,16 @@ function lookup() {
     const tr = document.createElement('tr');
     const rowNumber = index + 1;
     const notes = [];
+    let isDuplicate = false;
 
     if (result) {
       const ckey = canonicalKey(result, entry.input);
       if (seen.has(ckey)) {
+        isDuplicate = true;
         notes.push('⚠ Duplicate of row ' + seen.get(ckey));
+        notes.push('Excluded from copy: duplicate');
         duplicateCount += 1;
+        excludedCount += 1;
       } else {
         seen.set(ckey, rowNumber);
       }
@@ -304,8 +328,17 @@ function lookup() {
 
       const isbnDisplay = result.isbn || 'No ISBN listed';
       const statusDisplay = formatStatus(result.status);
+      const isActive = isActiveStatus(result.status);
+      if (!isActive) {
+        notes.push('Excluded from copy: discontinued');
+        excludedCount += 1;
+      }
+      if (!result.isbn) {
+        notes.push('Excluded from copy: no ISBN listed');
+        excludedCount += 1;
+      }
       const noteText = notes.join('; ') || '—';
-      const noteClass = noteText.includes('must be') ? 'invalid' : (noteText.includes('Duplicate') || noteText.includes('cards =') ? 'duplicate' : '');
+      const noteClass = noteText.includes('must be') ? 'invalid' : (noteText.includes('Duplicate') || noteText.includes('Excluded') || noteText.includes('cards =') ? 'duplicate' : '');
       tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
         '<td><strong>' + escapeHtml(isbnDisplay) + '</strong></td>' +
         '<td>' + escapeHtml(qtyInfo.exportQty) + '</td>' +
@@ -313,7 +346,7 @@ function lookup() {
         '<td>' + escapeHtml(statusDisplay) + '</td>' +
         '<td class="' + noteClass + '">' + escapeHtml(noteText) + '</td>';
       lines.push([entry.input, isbnDisplay, qtyInfo.exportQty, result.description || '', statusDisplay, noteText].map(cleanCopyValue).join(' | '));
-      if (result.isbn && qtyInfo.valid) isbnQtyLines.push(String(result.isbn) + '\t' + String(qtyInfo.exportQty));
+      if (result.isbn && isActive && !isDuplicate) isbnQtyLines.push(String(result.isbn) + '\t' + String(qtyInfo.exportQty));
     } else {
       const ckey = canonicalKey(null, entry.input);
       if (seen.has(ckey)) {
@@ -322,6 +355,8 @@ function lookup() {
       } else {
         seen.set(ckey, rowNumber);
       }
+      notes.push('Excluded from copy: not found');
+      excludedCount += 1;
 
       const noteText = notes.join('; ') || '—';
       tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
@@ -340,6 +375,7 @@ function lookup() {
   let warningText = '';
   if (duplicateCount > 0) warningText += duplicateCount + ' duplicate warning' + (duplicateCount === 1 ? '' : 's') + '.';
   if (warningCount > 0) warningText += (warningText ? ' ' : '') + warningCount + ' quantity warning' + (warningCount === 1 ? '' : 's') + '.';
+  if (excludedCount > 0) warningText += (warningText ? ' ' : '') + excludedCount + ' row' + (excludedCount === 1 ? '' : 's') + ' excluded from copy.';
   document.getElementById('summary').textContent = statusMessage(found, entries.length, 'items', warningText);
   setCopyButtons('main', !!lastResultsText);
   document.getElementById('resultsCard').scrollIntoView({ behavior:'smooth', block:'nearest' });
@@ -349,25 +385,27 @@ function findByLastDigits() {
   activeMode = 'partial';
   showResultsUnder('partialSection');
   setResultsHeader();
-  const inputs = parsePartialInputs(document.getElementById('partialInput').value);
+  const entries = parsePartialInputs(document.getElementById('partialInput').value);
   const body = document.getElementById('resultsBody');
   body.innerHTML = '';
   lastResultsText = '';
   lastIsbnsQtyText = '';
   setCopyButtons('', false);
 
-  if (inputs.length === 0) {
+  if (entries.length === 0) {
     resetResults('Enter the last 4–5 digits of an ISBN.');
     return;
   }
 
   let searchesWithMatches = 0;
   let totalMatches = 0;
+  let excludedCount = 0;
   const lines = ['Input | ISBN | Qty | Description | Status | Notes'];
   const isbnQtyLines = [];
 
-  inputs.forEach(search => {
-    const key = normalize(search);
+  entries.forEach(entry => {
+    const key = normalize(entry.input);
+    const requestedQty = entry.qtyProvided ? Number(entry.qtyRaw) : 1;
     const matches = isbnSuffixMap.get(key) || [];
     const unique = [];
     const seenIsbn = new Set();
@@ -379,43 +417,56 @@ function findByLastDigits() {
     }
 
     if (unique.length === 0) {
+      const noteText = 'Excluded from copy: not found';
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + escapeHtml(search) + '</td>' +
-        '<td class="notfound">—</td><td>—</td><td>—</td><td class="notfound">❌ Not Found</td><td>—</td>';
+      tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
+        '<td class="notfound">—</td><td>' + escapeHtml(entry.qtyProvided ? entry.qtyRaw : 1) + '</td><td>—</td><td class="notfound">❌ Not Found</td><td class="duplicate">' + escapeHtml(noteText) + '</td>';
       body.appendChild(tr);
-      lines.push([search, 'NOT FOUND', '', '', 'NOT FOUND', ''].join(' | '));
+      lines.push([entry.input, 'NOT FOUND', entry.qtyProvided ? entry.qtyRaw : 1, '', 'NOT FOUND', noteText].join(' | '));
+      excludedCount += 1;
       return;
     }
 
     searchesWithMatches += 1;
-    if (unique.length > 1) {
+    const isAmbiguous = unique.length > 1;
+    if (isAmbiguous) {
       const trNotice = document.createElement('tr');
-      trNotice.innerHTML = '<td>' + escapeHtml(search) + '</td><td colspan="5" class="duplicate">Multiple matches found — review options below</td>';
+      trNotice.innerHTML = '<td>' + escapeHtml(entry.input) + '</td><td colspan="5" class="duplicate">Multiple matches found — review options below. Excluded from Copy ISBN &amp; Qty.</td>';
       body.appendChild(trNotice);
-      lines.push([search, 'Multiple matches found', '', '', '', 'Review options below'].join(' | '));
+      lines.push([entry.input, 'Multiple matches found', '', '', '', 'Excluded from copy: multiple matches'].join(' | '));
+      excludedCount += 1;
     }
 
     unique.forEach(row => {
       totalMatches += 1;
+      const qtyInfo = calculateQty(row, entry);
       const statusDisplay = formatStatus(row.status);
-      const note = unique.length > 1 ? 'Possible match' : '—';
+      const isActive = isActiveStatus(row.status);
+      const notes = [];
+      notes.push(...qtyInfo.notes);
+      if (isAmbiguous) notes.push('Possible match; excluded from copy: multiple matches');
+      if (!isActive) notes.push('Excluded from copy: discontinued');
+      if (!row.isbn) notes.push('Excluded from copy: no ISBN listed');
+      const noteText = notes.join('; ') || '—';
+      const noteClass = noteText.includes('must be') ? 'invalid' : (noteText.includes('Possible') || noteText.includes('Excluded') || noteText.includes('cards =') ? 'duplicate' : '');
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + escapeHtml(search) + '</td>' +
+      tr.innerHTML = '<td>' + escapeHtml(entry.input) + '</td>' +
         '<td><strong>' + escapeHtml(row.isbn || '') + '</strong></td>' +
-        '<td>1</td>' +
+        '<td>' + escapeHtml(qtyInfo.exportQty) + '</td>' +
         '<td>' + escapeHtml(row.description || '') + '</td>' +
         '<td>' + escapeHtml(statusDisplay) + '</td>' +
-        '<td class="duplicate">' + escapeHtml(note) + '</td>';
+        '<td class="' + noteClass + '">' + escapeHtml(noteText) + '</td>';
       body.appendChild(tr);
-      lines.push([search, row.isbn || '', 1, row.description || '', statusDisplay, note].map(cleanCopyValue).join(' | '));
-      if (row.isbn) isbnQtyLines.push(String(row.isbn) + '\t1');
+      lines.push([entry.input, row.isbn || '', qtyInfo.exportQty, row.description || '', statusDisplay, noteText].map(cleanCopyValue).join(' | '));
+      if (row.isbn && isActive && !isAmbiguous) isbnQtyLines.push(String(row.isbn) + '\t' + String(qtyInfo.exportQty));
     });
   });
 
   lastResultsText = lines.join('\n');
   lastIsbnsQtyText = isbnQtyLines.join('\n');
-  let message = statusMessage(searchesWithMatches, inputs.length, 'searches', totalMatches > searchesWithMatches ? totalMatches + ' possible matches listed.' : '');
-  document.getElementById('summary').textContent = message;
+  let warningText = totalMatches > searchesWithMatches ? totalMatches + ' possible matches listed.' : '';
+  if (excludedCount > 0) warningText += (warningText ? ' ' : '') + excludedCount + ' row' + (excludedCount === 1 ? '' : 's') + ' excluded from copy.';
+  document.getElementById('summary').textContent = statusMessage(searchesWithMatches, entries.length, 'searches', warningText);
   setCopyButtons('partial', !!lastResultsText);
   document.getElementById('resultsCard').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
