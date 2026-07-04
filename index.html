@@ -68,6 +68,10 @@
     .resultsActions { display:flex; gap:10px; align-items:center; }
     .excelBtn { background:white; color:#333; border:1px solid #cfcfcf; width:auto; white-space:nowrap; }
     .excelBtn:hover { background:#f5f5f3; }
+    .excelBtn.mainExport { background:var(--orange); color:white; border-color:var(--orange); }
+    .excelBtn.mainExport:hover { background:var(--orange-dark); }
+    .excelBtn.partialExport { background:var(--teal-dark); color:white; border-color:var(--teal-dark); }
+    .excelBtn.partialExport:hover { background:#3f9d95; }
     .hidden { display:none; }
     @media (max-width:620px) {
       .resultsHeader{align-items:flex-start; flex-direction:column;} .resultsActions{width:100%;} .excelBtn{width:100%;}
@@ -184,6 +188,11 @@ function showResultsUnder(sectionId) {
   const section = document.getElementById(sectionId);
   section.insertAdjacentElement('afterend', resultsCard);
   resultsCard.classList.remove('hidden');
+  const exportBtn = document.getElementById('exportExcelBtn');
+  if (exportBtn) {
+    exportBtn.classList.remove('mainExport', 'partialExport');
+    exportBtn.classList.add(sectionId === 'partialSection' ? 'partialExport' : 'mainExport');
+  }
 }
 
 function setCopyButtons(mode, enabled) {
@@ -449,11 +458,39 @@ function copyTextToClipboard(text, message) {
   if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyText(text, message)); }
   else { fallbackCopyText(text, message); }
 }
+
+function isbnQtyHtmlTable(text) {
+  const rows = String(text || '').split('\n').filter(Boolean).map(line => {
+    const parts = line.split('\t');
+    const isbn = parts[0] || '';
+    const qty = parts.length > 1 ? parts[1] : '';
+    return '<tr><td style="mso-number-format:\'\\@\'; white-space:nowrap;">' + escapeHtml(isbn) + '</td><td>' + escapeHtml(qty) + '</td></tr>';
+  }).join('');
+  return '<html><body><table>' + rows + '</table></body></html>';
+}
+
+function copyIsbnsQtyToClipboard(text, message) {
+  if (!text) return;
+  const done = () => {
+    const summary = document.getElementById('summary');
+    summary.innerHTML = summary.innerHTML.replace(/ Results copied\.| ISBNs \+ Qty copied\.| Full results copied\.| Excel export downloaded\./g, '') + ' ' + escapeHtml(message);
+  };
+  if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+    const html = isbnQtyHtmlTable(text);
+    const item = new ClipboardItem({
+      'text/plain': new Blob([text], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' })
+    });
+    navigator.clipboard.write([item]).then(done).catch(() => copyTextToClipboard(text, message));
+  } else {
+    copyTextToClipboard(text, message);
+  }
+}
 function fallbackCopyText(text, message) {
   const temp = document.createElement('textarea'); temp.value = text; document.body.appendChild(temp); temp.select(); document.execCommand('copy'); document.body.removeChild(temp);
   const summary = document.getElementById('summary'); summary.innerHTML = summary.innerHTML.replace(/ Results copied\.| ISBNs \+ Qty copied\.| Full results copied\.| Excel export downloaded\./g, '') + ' ' + escapeHtml(message);
 }
-function copyIsbnsQty(mode) { if (!lastIsbnsQtyText || activeMode !== mode) return; copyTextToClipboard(lastIsbnsQtyText, 'ISBNs + Qty copied.'); }
+function copyIsbnsQty(mode) { if (!lastIsbnsQtyText || activeMode !== mode) return; copyIsbnsQtyToClipboard(lastIsbnsQtyText, 'ISBNs + Qty copied.'); }
 function copyResults(mode) { if (!lastResultsText || activeMode !== mode) return; copyTextToClipboard(lastResultsText, 'Full results copied.'); }
 function clearMain() { document.getElementById('input').value = ''; if (activeMode === 'main') { resetResults('No lookups yet.'); document.getElementById('resultsCard').classList.add('hidden'); activeMode = ''; } }
 function clearPartial() { document.getElementById('partialInput').value = ''; if (activeMode === 'partial') { resetResults('No lookups yet.'); document.getElementById('resultsCard').classList.add('hidden'); activeMode = ''; } }
