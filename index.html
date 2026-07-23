@@ -435,12 +435,12 @@ function exportExcel() {
     return { isbn: parts[0] || '', qty: parts.length > 1 ? parts[1] : '' };
   });
   const tableRows = rows.map(row => '<tr><td style="mso-number-format:\'\\@\';">' + escapeHtml(row.isbn) + '</td><td>' + escapeHtml(row.qty) + '</td></tr>').join('');
-  const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>ISBN Export</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table><thead><tr><th>ISBN</th><th>Qty</th></tr></thead><tbody>' + tableRows + '</tbody></table></body></html>';
+ const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Item Export</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table><thead><tr><th>ItemNumber</th><th>Quantity</th></tr></thead><tbody>' + tableRows + '</tbody></table></body></html>';
   const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'compendium-isbn-export.xls';
+ a.download = 'compendium-item-export.xls';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
