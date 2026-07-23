@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+ <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Compendium Item Number &amp; UPC to ISBN Converter</title>
@@ -426,28 +427,72 @@ function findByLastDigits() {
   setCopyButtons('partial', !!lastResultsText);
   document.getElementById('resultsCard').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
-
-
 function exportExcel() {
   if (!lastIsbnsQtyText) return;
-  const rows = lastIsbnsQtyText.split('\n').filter(Boolean).map(line => {
-    const parts = line.split('\t');
-    return { isbn: parts[0] || '', qty: parts.length > 1 ? parts[1] : '' };
-  });
-  const tableRows = rows.map(row => '<tr><td style="mso-number-format:\'\\@\';">' + escapeHtml(row.isbn) + '</td><td>' + escapeHtml(row.qty) + '</td></tr>').join('');
- const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Item Export</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table><thead><tr><th>ItemNumber</th><th>Quantity</th></tr></thead><tbody>' + tableRows + '</tbody></table></body></html>';
-  const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
- a.download = 'compendium-item-export.xls';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+
+  if (typeof XLSX === 'undefined') {
+    alert('Excel export could not load. Please refresh the page and try again.');
+    return;
+  }
+
+  const rows = lastIsbnsQtyText
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const parts = line.split('\t');
+
+      return [
+        String(parts[0] || ''),
+        Number(parts.length > 1 ? parts[1] : 1)
+      ];
+    });
+
+  const worksheetData = [
+    ['Item Number', 'Quantity'],
+    ...rows
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+  for (let rowNumber = 1; rowNumber <= rows.length; rowNumber++) {
+    const itemCell = worksheet[XLSX.utils.encode_cell({
+      r: rowNumber,
+      c: 0
+    })];
+
+    if (itemCell) {
+      itemCell.t = 's';
+      itemCell.z = '@';
+    }
+  }
+
+  worksheet['!cols'] = [
+    { wch: 18 },
+    { wch: 10 }
+  ];
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    'Item Export'
+  );
+
+  XLSX.writeFile(
+    workbook,
+    'compendium-item-export.xlsx'
+  );
+
   const summary = document.getElementById('summary');
-  summary.innerHTML = summary.innerHTML.replace(/ Results copied\.| ISBNs \+ Qty copied\.| Full results copied\.| Excel export downloaded\./g, '') + ' Excel export downloaded.';
+
+  summary.innerHTML =
+    summary.innerHTML.replace(
+      / Results copied\.| ISBNs \+ Qty copied\.| Full results copied\.| Excel export downloaded\./g,
+      ''
+    ) + ' Excel export downloaded.';
 }
+
 
 function copyTextToClipboard(text, message) {
   if (!text) return;
